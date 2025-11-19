@@ -1,10 +1,10 @@
 import torch
 from typing import List
 
-from akdn_project.data.interactions import InteractionData
-from akdn_project.data.kg import KGData
-from akdn_project.data.graph import GraphBuilder
-from akdn_project.models.akdn import AKDN
+from .data_loader.interactions import InteractionData
+from .data_loader.kg import KGData
+from .data_loader.graph import GraphBuilder
+from .models.akdn import AKDN
 
 def recommend_for_user(model: AKDN,
                        inter_data: InteractionData,
