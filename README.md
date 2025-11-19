@@ -6,6 +6,7 @@ Please download Yelp2018 dataset from:
 https://github.com/xiangwang1223/knowledge_graph_attention_network
 and place it under `data/yelp2018/`.
 
+```
 AKDN_PYTHON/
   data/
     amazon-book/
@@ -24,3 +25,4 @@ AKDN_PYTHON/
     akdn.py           # AKDN 本体（KGAttention + LightGCN + Gate）
   train_akdn.py       # 学習スクリプト（1エポック学習ループ）
   recommend_akdn.py   # 学習済みモデルで推薦するスクリプト
+```
