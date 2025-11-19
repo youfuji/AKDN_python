@@ -1,11 +1,11 @@
 import torch
 from torch.optim import Adam
 
-from .data_loader.interactions import InteractionData
-from .data_loader.kg import KGData
-from .data_loader.graph import GraphBuilder
-from .sampling.bpr import BPRSampler
-from .models.akdn import AKDN
+from data_loader.interactions import InteractionData
+from data_loader.kg import KGData
+from data_loader.graph import GraphBuilder
+from sampling.bpr import BPRSampler
+from models.akdn import AKDN
 
 def main():
     train_path = "data/yelp2018/train.txt"
@@ -24,6 +24,7 @@ def main():
         edge_index=graph.edge_index.to(device),
         edge_norm=graph.edge_norm.to(device),
         item_kg_neighbors=graph.item_kg_neighbors,
+        entity_kg_neighbors=graph.entity_kg_neighbors,
         dim=64,
         num_layers=2,
         reg=1e-4,

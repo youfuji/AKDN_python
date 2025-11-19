@@ -26,6 +26,7 @@ class GraphBuilder:
 
         # KG: AKDN 形式の item_kg_neighbors をそのまま公開
         self.item_kg_neighbors = kg_data.item_kg_neighbors
+        self.entity_kg_neighbors = kg_data.entity_neighbors
 
     def _build_interaction_graph(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """

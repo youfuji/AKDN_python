@@ -2,7 +2,7 @@ import random
 from typing import List, Tuple
 import torch
 
-from ..data_loader.interactions import InteractionData
+from data_loader.interactions import InteractionData
 
 class BPRSampler:
     """

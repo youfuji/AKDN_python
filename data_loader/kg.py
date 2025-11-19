@@ -13,6 +13,7 @@ class KGData:
     def __init__(self, path: str, num_items: int):
         self.triples: List[Tuple[int, int, int]] = []
         self.item_kg_neighbors: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+        self.entity_neighbors: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
 
         self._load(path, num_items)
 
@@ -26,6 +27,7 @@ class KGData:
                 h, r, t = int(h_str), int(r_str), int(t_str)
 
                 self.triples.append((h, r, t))
+                self.entity_neighbors[h].append((r, t))
 
                 # AKDN: item を head に持つときだけ利用
                 if 0 <= h < num_items:

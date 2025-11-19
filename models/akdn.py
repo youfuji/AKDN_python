@@ -6,30 +6,34 @@ from torch_scatter import scatter_add
 
 class KGAttentionLayer(nn.Module):
     """
-    AKDN の KG attention (式(1),(2)) に対応する簡略版レイヤー。
+    Relation-aware attention used for the knowledge diffusion component.
     """
 
     def __init__(self, dim: int):
         super().__init__()
-        self.dim = dim
-        self.W_k = nn.Linear(2 * dim, dim)
+        self.query_proj = nn.Linear(dim, dim)
+        self.key_proj = nn.Linear(dim, dim)
+        self.rel_proj = nn.Linear(dim, dim)
+        self.att_vector = nn.Linear(dim, 1, bias=False)
+        self.output_proj = nn.Linear(dim, dim)
         self.leaky_relu = nn.LeakyReLU(0.2)
 
-    def forward(self, item_emb, entity_emb, relation_emb, item_kg_neighbors):
+    def forward(self, center_emb, entity_emb, relation_emb, neighbor_dict):
         """
-        item_emb: (num_items, d)
+        center_emb: (num_nodes, d)
         entity_emb: (num_entities, d)
         relation_emb: (num_relations, d)
-        item_kg_neighbors: Dict[item_id, List[(r, v)]]
+        neighbor_dict: Dict[node_id, List[(relation_id, entity_id)]]
         """
-        num_items, d = item_emb.size()
-        device = item_emb.device
-        out = torch.zeros_like(item_emb)
+        num_nodes, _ = center_emb.size()
+        device = center_emb.device
+        updated = torch.zeros_like(center_emb)
 
-        for i in range(num_items):
-            neighbors = item_kg_neighbors.get(i, [])
+        for node_id in range(num_nodes):
+            neighbors = neighbor_dict.get(node_id, [])
+            center_vec = center_emb[node_id]
             if not neighbors:
-                out[i] = item_emb[i]
+                updated[node_id] = center_vec
                 continue
 
             rel_ids = torch.tensor([r for (r, v) in neighbors],
@@ -37,20 +41,22 @@ class KGAttentionLayer(nn.Module):
             ent_ids = torch.tensor([v for (r, v) in neighbors],
                                    dtype=torch.long, device=device)
 
-            r_vec = relation_emb[rel_ids]    # (n, d)
-            v_vec = entity_emb[ent_ids]      # (n, d)
-            i_vec = item_emb[i].expand_as(v_vec)
+            rel_vec = relation_emb[rel_ids]            # (n, d)
+            neigh_vec = entity_emb[ent_ids]            # (n, d)
+            messages = neigh_vec + rel_vec
 
-            hv = v_vec * i_vec               # e_v ⊙ e_i
-            concat = torch.cat([hv, hv], dim=-1)  # 2d 次元（簡易）
+            query = self.query_proj(center_vec)        # (d,)
+            keys = self.key_proj(messages)
+            relation_term = self.rel_proj(rel_vec)
+            att_raw = self.att_vector(
+                self.leaky_relu(keys + relation_term + query)
+            ).squeeze(-1)                              # (n,)
+            alpha = F.softmax(att_raw, dim=0)
+            agg = torch.sum(alpha.unsqueeze(-1) * messages, dim=0)
 
-            att_raw = r_vec * self.W_k(concat)    # (n, d)
-            att_raw = self.leaky_relu(att_raw.sum(dim=-1))  # (n,)
-            alpha = F.softmax(att_raw, dim=0)              # (n,)
+            updated[node_id] = center_vec + self.output_proj(agg)
 
-            out[i] = torch.sum(alpha.unsqueeze(-1) * v_vec, dim=0)
-
-        return out
+        return updated
 
 
 class LightGCNLayer(nn.Module):
@@ -91,16 +97,20 @@ class AKDNLayer(nn.Module):
 
     def __init__(self, dim, num_users, num_items, edge_index, edge_norm):
         super().__init__()
-        self.kg_layer = KGAttentionLayer(dim)
+        self.item_kg_layer = KGAttentionLayer(dim)
+        self.entity_kg_layer = KGAttentionLayer(dim)
         self.lgcn_layer = LightGCNLayer(num_users, num_items,
                                         edge_index, edge_norm)
         self.W_a = nn.Linear(dim, dim)
         self.W_b = nn.Linear(dim, dim)
 
     def forward(self, user_emb, item_emb,
-                entity_emb, relation_emb, item_kg_neighbors):
-        kg_item_emb = self.kg_layer(item_emb, entity_emb,
-                                    relation_emb, item_kg_neighbors)
+                entity_emb, relation_emb,
+                item_kg_neighbors, entity_kg_neighbors):
+        kg_item_emb = self.item_kg_layer(item_emb, entity_emb,
+                                         relation_emb, item_kg_neighbors)
+        new_entity_emb = self.entity_kg_layer(entity_emb, entity_emb,
+                                              relation_emb, entity_kg_neighbors)
         cf_user_emb, cf_item_emb = self.lgcn_layer(user_emb, item_emb)
 
         gate = torch.sigmoid(self.W_a(kg_item_emb) + self.W_b(cf_item_emb))
@@ -108,7 +118,7 @@ class AKDNLayer(nn.Module):
 
         new_user_emb = cf_user_emb
         new_item_emb = fused_item_emb
-        return new_user_emb, new_item_emb, entity_emb
+        return new_user_emb, new_item_emb, new_entity_emb
 
 
 class AKDN(nn.Module):
@@ -123,6 +133,7 @@ class AKDN(nn.Module):
                  num_entities, num_relations,
                  edge_index, edge_norm,
                  item_kg_neighbors,
+                 entity_kg_neighbors,
                  dim=64, num_layers=2, reg=1e-4):
         super().__init__()
         self.num_users = num_users
@@ -144,6 +155,7 @@ class AKDN(nn.Module):
         ])
 
         self.item_kg_neighbors = item_kg_neighbors
+        self.entity_kg_neighbors = entity_kg_neighbors
 
         nn.init.normal_(self.user_emb.weight, std=0.01)
         nn.init.normal_(self.item_emb.weight, std=0.01)
@@ -160,7 +172,9 @@ class AKDN(nn.Module):
         r = self.relation_emb.weight
 
         for layer in self.layers:
-            u, i, v = layer(u, i, v, r, self.item_kg_neighbors)
+            u, i, v = layer(u, i, v, r,
+                            self.item_kg_neighbors,
+                            self.entity_kg_neighbors)
             all_user_embs.append(u)
             all_cf_item_embs.append(i)
 
